@@ -37,12 +37,14 @@
     </style>
 </head>
 
-<body class="min-h-screen overflow-y-auto bg-white">
+<body class="bg-white flex flex-col min-h-screen overflow-y-auto">
 
-    <div class="flex flex-col h-full p-[10px] gap-[10px]">
+    <!-- MAIN WRAPPER -->
+    <div class="flex-1 flex flex-col p-[10px] gap-[10px] ">
 
         <!-- ================= MAIN IMAGE ================= -->
-        <div class="flex-1 rounded-[32px] overflow-hidden relative">
+        <div class="flex-1 rounded-[32px] overflow-hidden relative min-h-[97vh]">
+            <!-- <=== h-screen untuk 100vh -->
 
             <!-- Background -->
             <div class="absolute inset-0">
@@ -104,12 +106,13 @@
             </div>
         </div>
 
-        <!-- FOOTER -->
-        @include('partials.footer')
-
     </div>
 
+    <!-- FOOTER -->
+    @include('partials.footer')
+
 </body>
+
 
 
 </html>
