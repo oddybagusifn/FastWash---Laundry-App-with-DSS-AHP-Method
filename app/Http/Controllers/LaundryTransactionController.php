@@ -208,7 +208,7 @@ class LaundryTransactionController extends Controller
         /* =====================
            DATA BIAYA BULANAN
         ===================== */
-        $monthlyCapacityKg = 350;
+        $monthlyCapacityKg = 4000;
 
         $rawMaterialCost = RawMaterial::sum('price');
         $laborCost = Employee::with('detail')->get()->sum(fn ($e) => $e->detail->salary ?? 0);

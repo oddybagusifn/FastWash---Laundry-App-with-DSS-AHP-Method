@@ -85,14 +85,25 @@
                         </div>
                     </div>
 
-                    <!-- Author -->
-                    <div class="mt-6 lg:mt-0">
-                        <p class="font-medium text-[20px] sm:text-[24px] lg:text-[32px]">
-                            Daffa Naufal Athallah
-                        </p>
-                        <p class="text-[14px] sm:text-[16px] lg:text-[19px] opacity-70">
-                            A12.2023.07078
-                        </p>
+                    <div class="flex justify-between">
+                        <!-- Author -->
+                        <div class="mt-6 lg:mt-0">
+                            <p class="font-medium text-[20px] sm:text-[24px] lg:text-[32px]">
+                                Daffa Naufal Athallah
+                            </p>
+                            <p class="text-[14px] sm:text-[16px] lg:text-[19px] opacity-70">
+                                A12.2023.07078
+                            </p>
+                        </div>
+
+                        <div class="mt-6 lg:mt-0">
+                            <p class="font-medium text-[20px] sm:text-[24px] lg:text-[32px]">
+                                Daffa Naufal Athallah
+                            </p>
+                            <p class="text-[14px] sm:text-[16px] lg:text-[19px] opacity-70">
+                                A12.2023.07078
+                            </p>
+                        </div>
                     </div>
                 </div>
 
