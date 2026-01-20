@@ -8,6 +8,7 @@ use App\Models\LaundryTransaction;
 use App\Models\OverheadCost;
 use App\Models\RawMaterial;
 use App\Services\AhpService;
+use App\Services\LaundryPricingService;
 use Illuminate\Http\Request;
 
 class LaundryTransactionController extends Controller
@@ -26,9 +27,7 @@ class LaundryTransactionController extends Controller
     ===================== */
     public function create()
     {
-        $customers = Customer::all();
-
-        return view('pages.laundry-transactions.step-1', compact('customers'));
+        return view('pages.laundry-transactions.step-1');
     }
 
     public function storeStep1(Request $request)
@@ -72,191 +71,171 @@ class LaundryTransactionController extends Controller
     }
 
     /* =====================
-        STEP 3 (REVIEW + SAVE)
+        STEP 3 (REVIEW)
     ===================== */
-    public function step3()
+    public function step3(LaundryPricingService $pricing)
     {
         abort_if(! session()->has('step2'), 404);
 
-        $weight = session('step2.laundry_weight');
-
-        // PRICING FIX
-        $pricePerKg = 10000;
-        $serviceFee = 1500;
-
-        $totalPrice = ($pricePerKg * $weight) + $serviceFee;
-
-        return view('pages.laundry-transactions.step-3', [
-            'step1' => session('step1'),
-            'step2' => session('step2'),
-            'pricePerKg' => $pricePerKg,
-            'serviceFee' => $serviceFee,
-            'totalPrice' => $totalPrice,
-        ]);
-    }
-
-    public function storeFinal(AhpService $ahp)
-    {
         $step1 = session('step1');
         $step2 = session('step2');
 
-        /* =====================
-           A. DATA BIAYA BULANAN
-        ===================== */
-        $monthlyCapacityKg = 350;
+        $pricingResult = $pricing->calculate($step2);
 
-        $totalRawMaterial = RawMaterial::sum('price'); // Rp 235.000
-        $totalLabor = Employee::with('detail')->get()
-            ->sum(fn ($e) => $e->detail->salary ?? 0); // Rp 49.161.824
-        $totalOverhead = OverheadCost::sum('cost_amount'); // Rp 4.300.000
+        return view('pages.laundry-transactions.step-3', compact(
+            'step1',
+            'step2',
+            'pricingResult'
+        ));
+    }
 
-        /* =====================
-           B. BIAYA PER KG
-        ===================== */
-        $rawPerKg = $totalRawMaterial / $monthlyCapacityKg;
-        $laborPerKg = $totalLabor / $monthlyCapacityKg;
-        $overheadPerKg = $totalOverhead / $monthlyCapacityKg;
+    /* =====================
+        FINAL SAVE
+    ===================== */
+    public function storeFinal(
+        LaundryPricingService $pricing,
+        AhpService $ahp
+    ) {
+        abort_if(
+            ! session()->has('step1') || ! session()->has('step2'),
+            404
+        );
 
-        /* =====================
-           C. AHP
-        ===================== */
+        $step1 = session('step1');
+        $step2 = session('step2');
+
+        /* ======================
+           HITUNG HARGA JUAL
+        ====================== */
+        $pricingResult = $pricing->calculate($step2);
+
+        /* ======================
+           HITUNG HPP (AHP)
+        ====================== */
         $criteriaMatrix = [
-            [1,   3,   5],
-            [1 / 3, 1, 3],
-            [1 / 5, 1 / 3, 1],
+            [1, 1 / 3, 3],
+            [3, 1, 5],
+            [1 / 3, 1 / 5, 1],
         ];
 
-        $result = $ahp->calculate($criteriaMatrix);
-        if (! $result['is_consistent']) {
-            return back()->withErrors('Matriks AHP tidak konsisten (CR > 0.1)');
+        $ahpResult = $ahp->calculate($criteriaMatrix);
+
+        if (! $ahpResult['is_consistent']) {
+            return back()->withErrors('Matriks AHP tidak konsisten');
         }
 
-        $weights = $result['weights'];
+        $weights = $ahpResult['weights'];
+        $monthlyCapacityKg = 4000;
 
-        /* =====================
-           D. HPP PER KG (AHP)
-        ===================== */
-        $hppPerKg = ($weights[0] * $rawPerKg)
-                  + ($weights[1] * $laborPerKg)
-                  + ($weights[2] * $overheadPerKg);
+        $rawPerKg = RawMaterial::sum('price') / $monthlyCapacityKg;
+        $laborPerKg = Employee::with('detail')
+            ->get()
+            ->sum(fn ($e) => $e->detail->salary ?? 0) / $monthlyCapacityKg;
+        $overheadPerKg = OverheadCost::sum('cost_amount') / $monthlyCapacityKg;
 
-        $hppPerKg = round($hppPerKg);
+        $hppPerKg = round(
+            ($weights[0] * $rawPerKg) +
+            ($weights[1] * $laborPerKg) +
+            ($weights[2] * $overheadPerKg)
+        );
+
         $totalHpp = $hppPerKg * $step2['laundry_weight'];
 
-        /* =====================
-           E. PRICING
-        ===================== */
-        $pricePerKg = 10000;
-        $serviceFee = 1500;
-
-        $totalPrice = ($pricePerKg * $step2['laundry_weight']) + $serviceFee;
-
-        /* =====================
-           F. SIMPAN DATA
-        ===================== */
+        /* ======================
+           BUAT CUSTOMER
+        ====================== */
         $customer = Customer::create([
             'customer_name' => $step1['customer_name'],
             'phone_number' => $step1['phone_number'],
             'address' => $step1['address'] ?? null,
         ]);
 
+        /* ======================
+           SIMPAN TRANSAKSI
+        ====================== */
         LaundryTransaction::create([
             'customer_id' => $customer->id,
             'transaction_date' => $step1['transaction_date'],
             'laundry_weight' => $step2['laundry_weight'],
+            'category' => $step2['category'],
+            'laundry_type' => $step2['laundry_type'],
+            'perfume' => $step2['perfume'] ?? null,
+            'total_price' => $pricingResult['total_price'],
             'hpp_per_kg' => $hppPerKg,
             'total_hpp' => $totalHpp,
-            'total_price' => $totalPrice,
             'notes' => $step2['notes'] ?? null,
         ]);
 
+        /* ======================
+           CLEAR SESSION
+        ====================== */
         session()->forget(['step1', 'step2']);
 
         return redirect()
             ->route('laundry-transactions.index')
-            ->with('success', 'Transaksi berhasil');
+            ->with('success', 'Transaksi berhasil disimpan');
     }
 
     /* =====================
-       HPP VIEW (REVIEW)
+        HPP VIEW
     ===================== */
     public function hpp(AhpService $ahp)
     {
         abort_if(! session()->has('step2'), 404);
 
-        $step1 = session('step1');
         $step2 = session('step2');
 
-        /* =====================
-           AHP: MATRIX KRITERIA
-        ===================== */
+        // =====================
+        // AHP MATRIX
+        // =====================
         $criteriaMatrix = [
-            [1, 1 / 3, 3],    // Bahan Baku
-            [3, 1, 5],      // Tenaga Kerja
-            [1 / 3, 1 / 5, 1],  // Overhead
+            [1, 1 / 3, 3],
+            [3, 1, 5],
+            [1 / 3, 1 / 5, 1],
         ];
 
         $ahpResult = $ahp->calculate($criteriaMatrix);
 
         if (! $ahpResult['is_consistent']) {
-            return back()->withErrors('Matriks AHP tidak konsisten (CR > 0.1)');
+            return back()->withErrors('Matriks AHP tidak konsisten');
         }
 
         $weights = $ahpResult['weights'];
-        $cr = $ahpResult['cr'];
 
-        /* =====================
-           DATA BIAYA BULANAN
-        ===================== */
+        // =====================
+        // KAPASITAS BULANAN
+        // =====================
         $monthlyCapacityKg = 4000;
 
-        $rawMaterialCost = RawMaterial::sum('price');
-        $laborCost = Employee::with('detail')->get()->sum(fn ($e) => $e->detail->salary ?? 0);
-        $overheadCost = OverheadCost::sum('cost_amount');
+        // =====================
+        // BIAYA PER KG
+        // =====================
+        $rawMaterialCost = RawMaterial::sum('price') / $monthlyCapacityKg;
 
-        /* =====================
-           BIAYA PER KG
-        ===================== */
-        $rawPerKg = $rawMaterialCost / $monthlyCapacityKg;
-        $laborPerKg = $laborCost / $monthlyCapacityKg;
-        $overheadPerKg = $overheadCost / $monthlyCapacityKg;
+        $laborCost = Employee::with('detail')
+            ->get()
+            ->sum(fn ($e) => $e->detail->salary ?? 0) / $monthlyCapacityKg;
 
-        /* =====================
-           HPP PER KG (AHP)
-        ===================== */
-        $hppPerKg = ($weights[0] * $rawPerKg) + ($weights[1] * $laborPerKg) + ($weights[2] * $overheadPerKg);
-        $hppPerKg = round($hppPerKg);
+        $overheadCost = OverheadCost::sum('cost_amount') / $monthlyCapacityKg;
 
-        /* =====================
-           TOTAL HPP
-        ===================== */
+        // =====================
+        // HPP PER KG (AHP)
+        // =====================
+        $hppPerKg = round(
+            ($weights[0] * $rawMaterialCost) +
+            ($weights[1] * $laborCost) +
+            ($weights[2] * $overheadCost)
+        );
+
         $totalHpp = $hppPerKg * $step2['laundry_weight'];
 
-        /* =====================
-           PRICING FIX (opsional)
-        ===================== */
-        $pricePerKg = 10000;
-        $serviceFee = 1500;
-
         return view('pages.laundry-transactions.step-hpp', compact(
-            'step1',
-            'step2',
             'rawMaterialCost',
             'laborCost',
             'overheadCost',
             'hppPerKg',
             'totalHpp',
-            'weights',
-            'cr',
-            'pricePerKg',
-            'serviceFee'
+            'step2'
         ));
-    }
-
-    public function destroy(LaundryTransaction $laundryTransaction)
-    {
-        $laundryTransaction->delete();
-
-        return back()->with('success', 'Transaction deleted');
     }
 }
